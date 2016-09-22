@@ -1,0 +1,1450 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+    <meta charset='utf-8'>
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <meta name="description" content="Analysis of Event Related Potentials (ERPs) : ">
+
+    <link rel="stylesheet" type="text/css" media="screen" href="stylesheets/stylesheet.css">
+
+    <title>Analysis of Event Related Potentials (ERPs)</title>
+  </head>
+
+  <body>
+
+    <!-- HEADER -->
+    <div id="header_wrap" class="outer">
+        <header class="inner">
+          <a id="forkme_banner" href="https://github.com/mjtat/Electroencephalography-and-event-related-potentials.">View on GitHub</a>
+
+          <h1 id="project_title">Analysis of Event Related Potentials (ERPs)</h1>
+          <h2 id="project_tagline"></h2>
+
+            <section id="downloads">
+              <a class="zip_download_link" href="https://github.com/mjtat/Electroencephalography-and-event-related-potentials./zipball/master">Download this project as a .zip file</a>
+              <a class="tar_download_link" href="https://github.com/mjtat/Electroencephalography-and-event-related-potentials./tarball/master">Download this project as a tar.gz file</a>
+            </section>
+        </header>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div id="main_content_wrap" class="outer">
+      <section id="main_content" class="inner">
+        <h2>
+<a id="introduction" class="anchor" href="#introduction" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Introduction</h2>
+
+<p>The following script was designed to clean up and summarize <a href="https://en.wikipedia.org/wiki/Event-related_potential">event-related potential (ERP)</a> data recorded using <a href="https://en.wikipedia.org/wiki/Electroencephalography">electroencelphalography</a> from a 128-electrode array.</p>
+
+<p>The data are memory data recorded from first year anatomy students. Students were presented with anatomy terms on the screen and had to tell us if they "Could Define" the term, were "familiar" with the term, or "didn't know" the term. The raw EEG data was cleaned up of artifacts using a software package called <a href="http://www.cortechsolutions.com/EMSE">EMSE</a>. From this data, we took 2 second epochs of data from each memory test trial. The data was recorded at 256 Hz / Sec (or in other words, 256 samples of data per 1 second). </p>
+
+<p>Each resulting raw data file, in spreadsheet form, consisted of ~128 columns of data (corresponding to each electrode) and 564 rows of data (each row corresponding to a time point). We collected data from 20 subjects.</p>
+
+<p>The goal of the script I created was the following:
+1) Read in all data files at once into R, and conduct all cleaning operations on all data files, then spit them back out.</p>
+
+<p>2) Extract the means of different epochs, for each subject. For example, within total 2 second time frame, I wanted to get the mean amplitude for the data between 300-500 milliseconds, for a subset of electrodes (referred to as regions of interest). I wanted to extract this data, average them across subjects, and then have the script spit out a spreadsheet with the relevant means for each region of interest.</p>
+
+<p>The data are yet unpublished, but I feel there is no problem publishing the analysis script in the public domain for others to use. I will note: this was one of the first more complicated exercises I undertook in R (seems so long ago), so it's a bit messy. Have fun!</p>
+
+<pre><code>################
+# INTRODUCTION #
+################
+
+# Written by Michelle Tat
+
+# This is a working script used to pull the relevant EEG data from a directory of text files
+# Text files are exported data files from EMSE (after data cleaning has been accomplished)
+# Originally written for Classroom Learning Data (to replace MATLAB code, since R is free and more accessible)
+# But intended to be adaptable for other ERP data
+
+#Update Log
+#--Fixed bug with GUI selection
+
+##########################
+# WHAT IT CURRENTLY DOES #
+##########################
+
+# 1) Reads files in, places all of them into a large list of data frames
+# 2) Regions of Interest (ROIs) are defined, which represent various columns of data in each data frame. These can be changed.
+# 3) Intervals of interest defined (can be modified if necessary). Current Intervals are N400, LPC, and LFE
+# 4) Snips out 200 ms baseline interval (can be left in, but modifications are needed for that)
+# 5) Pulls out ROIs for each subject, for each component
+# 6) Takes the GRAND AVERAGE for each ERP component
+# 7) Outputs grand averages into CSV files (FN400, LPC, and LFE individual files)
+
+#########
+# TO DO #
+#########
+
+# 1) Write code to automatically run ANOVAs where appropriate
+
+################
+# INSTRUCTIONS #
+################
+
+# Theoretically you can select all the code and run it as is. However, if the code needs to be modified
+
+# e.g, you are not working with Classroom Learning Data, the arguments in each statement below need to be changed appropriately. PLEASE read each commented section carefully so you understand what may need to be changed.
+
+# Each section of the code has been denoted by a section number, so you can simply do control+F and go to the relevant section. They denoted as SetUp.x (where x is an number), CD.x , FAM.x, and DK.x.
+
+###############################################################
+# Setup.1: SET UP RELEVANT PACKAGES NEEDED TO RUN THIS SCRIPT #
+###############################################################
+
+# If libraries do not load, you need to install them. 
+# Uncomment all "install.packages" statements below if you need to install these packages.
+#install.packages("xlsx")
+#install.packages("gWidgets2tcltk")
+#install.packages("gWidgets2")
+#install.packages("tcltk")
+#install.packages("ez")
+#install.packages("ggplot2")
+#install.packages("reshape2")
+#install.packages("dplyr")
+#install.packages("ddply")
+#install.packages("tidyr")
+
+library("xlsx")
+library("rJava")
+library("gWidgets2tcltk")
+library("gWidgets2")
+library("tcltk")
+library("ez")
+library("ggplot2")
+library("reshape2")
+library("dplyr")
+library("ddply")
+library("tidyr")
+options("guiToolkit"="tcltk")
+
+
+
+# Set directory paths for Can Define, Familiar, and Don't Know Raw Text Files
+
+CanDefineDir &lt;- choose.dir(caption = "Select the folder for CAN DEFINE Files")
+Sys.sleep(1)
+FamiliarDir &lt;- choose.dir(caption = "Select the folder for FAMLIAR Files")
+Sys.sleep(1)
+DontKnowDir &lt;- choose.dir(caption = "Select the folder for DON'T KNOW Files")
+Sys.sleep(1)
+
+# Prompts user to set directory for where the CSV file will be output
+filename &lt;- ginput(msg ="Please enter your output file name. Your file will be output as a .CSV file.", title = "OUTPUT DIALOG BOX", icon = c("question"))
+csv &lt;- c(".csv")
+xls &lt;- c(".xlsx")
+Sys.sleep(1)
+OUT&lt;-choose.dir(caption = "Choose output directory")
+Sys.sleep(1)
+Out.File.csv &lt;- paste(OUT,filename,csv, sep = "")
+Out.File.xlsx &lt;- paste(OUT,filename,xls, sep = "")
+
+
+# Reads directory where files are located. Note that the "path" argument needs to be set to the directory where all the txt files exist.
+filesCD &lt;- list.files(path = CanDefineDir, pattern="*.txt", full.names=TRUE)
+filesFAM &lt;- list.files(path = FamiliarDir,pattern="*.txt", full.names=TRUE)
+filesDK &lt;- list.files(path = DontKnowDir, pattern="*.txt", full.names=TRUE)
+
+# Imports all files TEXT files into R, store data frames in a large list object named my.data
+my.dataCD&lt;-lapply(filesCD, read.delim, header = FALSE)
+my.dataFAM&lt;-lapply(filesFAM, read.delim, header = FALSE)
+my.dataDK&lt;-lapply(filesDK, read.delim, header = FALSE)
+
+
+# Sets subject number IDs to character vector titled names1
+names1 &lt;- c("1115", "1140", "1181", "1220", "1337", "1414", "1424", "1498", "1513", "1581", "1651", "1775", "1833", "2000","2001", "2003", "2004", "2005", "2007", "2010", "2011", "2013", "2014", "2015" ,"2016", "2017", "2018", "2020","2022", "2023", "2025" ,"2027", "2028", "2029")
+namesout &lt;- names1
+
+# Using stringr package, assign subject numbers to data frames in my.data (or other list object)
+names(my.dataCD)&lt;- stringr::str_replace(names1, pattern = ".txt", replacement = "")
+
+# Define Regions of Interest (ROI) (V1-120 refer to column names in each data frame)
+# Each column in the raw datafiles represent an electrode. ROIs can then be grouped however
+# you wish to group them.
+
+ROI1 &lt;- c("V94","V95","V101","V102","V103","V104","V105");
+ROI2 &lt;- c("V59","V60","V69","V70","V71","V72","V73")
+ROI3 &lt;- c("V88","V89","V98","V99","V100","V108","V109")
+ROI4 &lt;- c("V63","V64","V66","V67","V68","V75","V76")
+ROI5 &lt;- c("V6","V7","V8","V113","V122","V123","V124","V125")
+ROI6 &lt;- c("V5","V6","V7","V17","V18")
+ROI7 &lt;- c("V30","V31","V32","V35","V36")
+ROI8 &lt;- c("V79","V80","V81","V82","V83","V92","V93")
+ROI9 &lt;- c("V3","V4","V5","V19", "V20", "V32", "V34", "V112")
+
+
+
+
+####################
+# CD.1: FN400 ROIs #
+####################
+
+
+
+
+
+# Snips out baseline data, sets it to a list named my.data2 (comment out this section if you need it)
+my.data2CD&lt;-lapply(my.dataCD, function(x) x[-c(1:49),])
+
+# Selects out data for 300-500 ms interval (N400), sets it to a list named my.FN400
+my.FN400&lt;-lapply(my.data2CD, function(x) x[84:141,])
+
+# Selects out data for 500-800 ms interval, sets it to a list named my.LPC
+my.LPC&lt;-lapply(my.data2CD, function(x) x[141:228,])
+
+# Selects out data for 800-1200 ms interval, sets it to a list named my.LFE
+my.LFE&lt;-lapply(my.data2CD, function(x) x[228:339,])
+
+# Pulls out FN400 Data for EACH ROI. Essentially reads in each subject's raw data
+# And places ROI data in different lists of data frames (ROIs 1-9)
+
+my.FN400.ROI.1&lt;-lapply(my.FN400, function(x) x[ROI1])
+my.FN400.ROI.2&lt;-lapply(my.FN400, function(x) x[ROI2])
+my.FN400.ROI.3&lt;-lapply(my.FN400, function(x) x[ROI3])
+my.FN400.ROI.4&lt;-lapply(my.FN400, function(x) x[ROI4])
+my.FN400.ROI.5&lt;-lapply(my.FN400, function(x) x[ROI5])
+my.FN400.ROI.6&lt;-lapply(my.FN400, function(x) x[ROI6])
+my.FN400.ROI.7&lt;-lapply(my.FN400, function(x) x[ROI7])
+my.FN400.ROI.8&lt;-lapply(my.FN400, function(x) x[ROI8])
+my.FN400.ROI.9&lt;-lapply(my.FN400, function(x) x[ROI9])
+
+# Finds mean of all rows in each ROI. Converts each into a matrix.
+FN400.rowmeans.ROI1 &lt;- lapply(my.FN400.ROI.1, function(x) rowMeans(x))
+FN400.rowmeans.ROI1 &lt;- lapply(FN400.rowmeans.ROI1, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI2 &lt;- lapply(my.FN400.ROI.2, function(x) rowMeans(x))
+FN400.rowmeans.ROI2 &lt;- lapply(FN400.rowmeans.ROI2, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI3 &lt;- lapply(my.FN400.ROI.3, function(x) rowMeans(x))
+FN400.rowmeans.ROI3 &lt;- lapply(FN400.rowmeans.ROI3, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI4 &lt;- lapply(my.FN400.ROI.4, function(x) rowMeans(x))
+FN400.rowmeans.ROI4 &lt;- lapply(FN400.rowmeans.ROI4, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI5 &lt;- lapply(my.FN400.ROI.5, function(x) rowMeans(x))
+FN400.rowmeans.ROI5 &lt;- lapply(FN400.rowmeans.ROI5, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI6 &lt;- lapply(my.FN400.ROI.6, function(x) rowMeans(x))
+FN400.rowmeans.ROI6 &lt;- lapply(FN400.rowmeans.ROI6, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI7 &lt;- lapply(my.FN400.ROI.7, function(x) rowMeans(x))
+FN400.rowmeans.ROI7 &lt;- lapply(FN400.rowmeans.ROI7, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI8 &lt;- lapply(my.FN400.ROI.8, function(x) rowMeans(x))
+FN400.rowmeans.ROI8 &lt;- lapply(FN400.rowmeans.ROI8, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI9 &lt;- lapply(my.FN400.ROI.9, function(x) rowMeans(x))
+FN400.rowmeans.ROI9 &lt;- lapply(FN400.rowmeans.ROI9, function(x) as.matrix(x))
+
+# Finds column means of the row means (hence, finding the grand average for each ROI)
+# Additional lines of code transposes each matrix (such that subject numbers appear in each row)
+# Then it does a bit of clean up removing any unnecessary variables
+
+FN400.grandmean.ROI1 &lt;- lapply(FN400.rowmeans.ROI1, function(x) colMeans(x))
+FN400.grandmean.ROI2 &lt;- lapply(FN400.rowmeans.ROI2, function(x) colMeans(x))
+FN400.grandmean.ROI3 &lt;- lapply(FN400.rowmeans.ROI3, function(x) colMeans(x))
+FN400.grandmean.ROI4 &lt;- lapply(FN400.rowmeans.ROI4, function(x) colMeans(x))
+FN400.grandmean.ROI5 &lt;- lapply(FN400.rowmeans.ROI5, function(x) colMeans(x))
+FN400.grandmean.ROI6 &lt;- lapply(FN400.rowmeans.ROI6, function(x) colMeans(x))
+FN400.grandmean.ROI7 &lt;- lapply(FN400.rowmeans.ROI7, function(x) colMeans(x))
+FN400.grandmean.ROI8 &lt;- lapply(FN400.rowmeans.ROI8, function(x) colMeans(x))
+FN400.grandmean.ROI9 &lt;- lapply(FN400.rowmeans.ROI9, function(x) colMeans(x))
+
+# Transposes Grand Mean data frames such that subject IDs are their own column.
+# Renames the first column.
+# Removes unnecessary variables.
+
+FN400.Transpose.ROI1 &lt;- t(FN400.grandmean.ROI1)
+FN400.Transpose.ROI1&lt;-t(FN400.Transpose.ROI1)
+FN400.DF.ROI1 &lt;- as.data.frame(FN400.Transpose.ROI1)
+names(FN400.DF.ROI1)[1] &lt;- "FN400.ROI.1"
+rm(FN400.Transpose.ROI1) # A little clean up
+
+FN400.Transpose.ROI2 &lt;- t(FN400.grandmean.ROI2)
+FN400.Transpose.ROI2&lt;-t(FN400.Transpose.ROI2)
+FN400.DF.ROI2 &lt;- as.data.frame(FN400.Transpose.ROI2)
+names(FN400.DF.ROI2)[1] &lt;- "FN400.ROI.2"
+rm(FN400.Transpose.ROI2) # A little clean up
+
+FN400.Transpose.ROI3 &lt;- t(FN400.grandmean.ROI3)
+FN400.Transpose.ROI3&lt;-t(FN400.Transpose.ROI3)
+FN400.DF.ROI3 &lt;- as.data.frame(FN400.Transpose.ROI3)
+names(FN400.DF.ROI3)[1] &lt;- "FN400.ROI.3"
+rm(FN400.Transpose.ROI3) # A little clean up
+
+FN400.Transpose.ROI4 &lt;- t(FN400.grandmean.ROI4)
+FN400.Transpose.ROI4&lt;-t(FN400.Transpose.ROI4)
+FN400.DF.ROI4 &lt;- as.data.frame(FN400.Transpose.ROI4)
+names(FN400.DF.ROI4)[1] &lt;- "FN400.ROI.4"
+rm(FN400.Transpose.ROI4) # A little clean up
+
+FN400.Transpose.ROI5 &lt;- t(FN400.grandmean.ROI5)
+FN400.Transpose.ROI5&lt;-t(FN400.Transpose.ROI5)
+FN400.DF.ROI5 &lt;- as.data.frame(FN400.Transpose.ROI5)
+names(FN400.DF.ROI5)[1] &lt;- "FN400.ROI.5"
+rm(FN400.Transpose.ROI5) # A little clean up
+
+FN400.Transpose.ROI6 &lt;- t(FN400.grandmean.ROI6)
+FN400.Transpose.ROI6&lt;-t(FN400.Transpose.ROI6)
+FN400.DF.ROI6 &lt;- as.data.frame(FN400.Transpose.ROI6)
+names(FN400.DF.ROI6)[1] &lt;- "FN400.ROI.6"
+rm(FN400.Transpose.ROI6) # A little clean up
+
+FN400.Transpose.ROI7 &lt;- t(FN400.grandmean.ROI7)
+FN400.Transpose.ROI7&lt;-t(FN400.Transpose.ROI7)
+FN400.DF.ROI7 &lt;- as.data.frame(FN400.Transpose.ROI7)
+names(FN400.DF.ROI7)[1] &lt;- "FN400.ROI.7"
+rm(FN400.Transpose.ROI7) # A little clean up
+
+FN400.Transpose.ROI8 &lt;- t(FN400.grandmean.ROI8)
+FN400.Transpose.ROI8&lt;-t(FN400.Transpose.ROI8)
+FN400.DF.ROI8 &lt;- as.data.frame(FN400.Transpose.ROI8)
+names(FN400.DF.ROI8)[1] &lt;- "FN400.ROI.8"
+rm(FN400.Transpose.ROI8) # A little clean up
+
+FN400.Transpose.ROI9 &lt;- t(FN400.grandmean.ROI9)
+FN400.Transpose.ROI9&lt;-t(FN400.Transpose.ROI9)
+FN400.DF.ROI9 &lt;- as.data.frame(FN400.Transpose.ROI9)
+names(FN400.DF.ROI9)[1] &lt;- "FN400.ROI.9"
+rm(FN400.Transpose.ROI9) # A little clean up
+
+##############################################################
+# CD.2: Set up a new data frame for all FN400 Grand Averages #
+##############################################################
+
+# Creates a list of data frames that contain ALL FN400 data in the appropriate format.
+# Unnests the lists (splits it into individual data frames) for later modification
+FN400.DF.ROI1 &lt;- cbind(FN400.DF.ROI1, FN400.DF.ROI2, FN400.DF.ROI3, FN400.DF.ROI4, FN400.DF.ROI5, FN400.DF.ROI6, FN400.DF.ROI7, FN400.DF.ROI8, FN400.DF.ROI9)
+CD.FN400.GrandAvg &lt;- FN400.DF.ROI1
+CD.FN400.GrandAvg &lt;-unnest(CD.FN400.GrandAvg)
+
+
+# Renames columns (make sure to add or subtract labels based on your number of ROIs!!!)
+names(CD.FN400.GrandAvg)[1:9] &lt;- c("CD.FN400.ROI1", "CD.FN400.ROI2", "CD.FN400.ROI3", "CD.FN400.ROI4", "CD.FN400.ROI5", "CD.FN400.ROI6", "CD.FN400.ROI7", "CD.FN400.ROI8", "CD.FN400.ROI9")
+
+# Set Subject ID Names
+CD.FN400.GrandAvg&lt;-cbind(CD.FN400.GrandAvg)
+
+
+
+#################
+# CD.3 LPC ROIs #
+#################
+
+
+
+# Pulls out LPC Data for EACH ROI
+my.LPC.ROI.1&lt;-lapply(my.LPC, function(x) x[ROI1])
+my.LPC.ROI.2&lt;-lapply(my.LPC, function(x) x[ROI2])
+my.LPC.ROI.3&lt;-lapply(my.LPC, function(x) x[ROI3])
+my.LPC.ROI.4&lt;-lapply(my.LPC, function(x) x[ROI4])
+my.LPC.ROI.5&lt;-lapply(my.LPC, function(x) x[ROI5])
+my.LPC.ROI.6&lt;-lapply(my.LPC, function(x) x[ROI6])
+my.LPC.ROI.7&lt;-lapply(my.LPC, function(x) x[ROI7])
+my.LPC.ROI.8&lt;-lapply(my.LPC, function(x) x[ROI8])
+my.LPC.ROI.9&lt;-lapply(my.LPC, function(x) x[ROI9])
+
+# Finds mean of all rows in each ROI
+LPC.rowmeans.ROI1 &lt;- lapply(my.LPC.ROI.1, function(x) rowMeans(x))
+LPC.rowmeans.ROI1 &lt;- lapply(LPC.rowmeans.ROI1, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI2 &lt;- lapply(my.LPC.ROI.2, function(x) rowMeans(x))
+LPC.rowmeans.ROI2 &lt;- lapply(LPC.rowmeans.ROI2, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI3 &lt;- lapply(my.LPC.ROI.3, function(x) rowMeans(x))
+LPC.rowmeans.ROI3 &lt;- lapply(LPC.rowmeans.ROI3, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI4 &lt;- lapply(my.LPC.ROI.4, function(x) rowMeans(x))
+LPC.rowmeans.ROI4 &lt;- lapply(LPC.rowmeans.ROI4, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI5 &lt;- lapply(my.LPC.ROI.5, function(x) rowMeans(x))
+LPC.rowmeans.ROI5 &lt;- lapply(LPC.rowmeans.ROI5, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI6 &lt;- lapply(my.LPC.ROI.6, function(x) rowMeans(x))
+LPC.rowmeans.ROI6 &lt;- lapply(LPC.rowmeans.ROI6, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI7 &lt;- lapply(my.LPC.ROI.7, function(x) rowMeans(x))
+LPC.rowmeans.ROI7 &lt;- lapply(LPC.rowmeans.ROI7, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI8 &lt;- lapply(my.LPC.ROI.8, function(x) rowMeans(x))
+LPC.rowmeans.ROI8 &lt;- lapply(LPC.rowmeans.ROI8, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI9 &lt;- lapply(my.LPC.ROI.9, function(x) rowMeans(x))
+LPC.rowmeans.ROI9 &lt;- lapply(LPC.rowmeans.ROI9, function(x) as.matrix(x))
+
+
+# Finds column mean of the row means (hence, finding the grand average for each ROI)
+# Additional lines of code transposes each matrix (such that subject numbers appear in each row)
+# Then it does a bit of clean up removing any unnecessary variables
+
+LPC.grandmean.ROI1 &lt;- lapply(LPC.rowmeans.ROI1, function(x) colMeans(x))
+LPC.grandmean.ROI2 &lt;- lapply(LPC.rowmeans.ROI2, function(x) colMeans(x))
+LPC.grandmean.ROI3 &lt;- lapply(LPC.rowmeans.ROI3, function(x) colMeans(x))
+LPC.grandmean.ROI4 &lt;- lapply(LPC.rowmeans.ROI4, function(x) colMeans(x))
+LPC.grandmean.ROI5 &lt;- lapply(LPC.rowmeans.ROI5, function(x) colMeans(x))
+LPC.grandmean.ROI6 &lt;- lapply(LPC.rowmeans.ROI6, function(x) colMeans(x))
+LPC.grandmean.ROI7 &lt;- lapply(LPC.rowmeans.ROI7, function(x) colMeans(x))
+LPC.grandmean.ROI8 &lt;- lapply(LPC.rowmeans.ROI8, function(x) colMeans(x))
+LPC.grandmean.ROI9 &lt;- lapply(LPC.rowmeans.ROI9, function(x) colMeans(x))
+
+LPC.Transpose.ROI1 &lt;- t(LPC.grandmean.ROI1)
+LPC.Transpose.ROI1&lt;-t(LPC.Transpose.ROI1)
+LPC.DF.ROI1 &lt;- as.data.frame(LPC.Transpose.ROI1)
+names(LPC.DF.ROI1)[1] &lt;- "LPC.ROI.1"
+rm(LPC.Transpose.ROI1) # A little clean up
+
+LPC.Transpose.ROI2 &lt;- t(LPC.grandmean.ROI2)
+LPC.Transpose.ROI2&lt;-t(LPC.Transpose.ROI2)
+LPC.DF.ROI2 &lt;- as.data.frame(LPC.Transpose.ROI2)
+names(LPC.DF.ROI2)[1] &lt;- "LPC.ROI.2"
+rm(LPC.Transpose.ROI2) # A little clean up
+
+LPC.Transpose.ROI3 &lt;- t(LPC.grandmean.ROI3)
+LPC.Transpose.ROI3&lt;-t(LPC.Transpose.ROI3)
+LPC.DF.ROI3 &lt;- as.data.frame(LPC.Transpose.ROI3)
+names(LPC.DF.ROI3)[1] &lt;- "LPC.ROI.3"
+rm(LPC.Transpose.ROI3) # A little clean up
+
+LPC.Transpose.ROI4 &lt;- t(LPC.grandmean.ROI4)
+LPC.Transpose.ROI4&lt;-t(LPC.Transpose.ROI4)
+LPC.DF.ROI4 &lt;- as.data.frame(LPC.Transpose.ROI4)
+names(LPC.DF.ROI4)[1] &lt;- "LPC.ROI.4"
+rm(LPC.Transpose.ROI4) # A little clean up
+
+LPC.Transpose.ROI5 &lt;- t(LPC.grandmean.ROI5)
+LPC.Transpose.ROI5&lt;-t(LPC.Transpose.ROI5)
+LPC.DF.ROI5 &lt;- as.data.frame(LPC.Transpose.ROI5)
+names(LPC.DF.ROI5)[1] &lt;- "LPC.ROI.5"
+rm(LPC.Transpose.ROI5) # A little clean up
+
+LPC.Transpose.ROI6 &lt;- t(LPC.grandmean.ROI6)
+LPC.Transpose.ROI6&lt;-t(LPC.Transpose.ROI6)
+LPC.DF.ROI6 &lt;- as.data.frame(LPC.Transpose.ROI6)
+names(LPC.DF.ROI6)[1] &lt;- "LPC.ROI.6"
+rm(LPC.Transpose.ROI6) # A little clean up
+
+LPC.Transpose.ROI7 &lt;- t(LPC.grandmean.ROI7)
+LPC.Transpose.ROI7&lt;-t(LPC.Transpose.ROI7)
+LPC.DF.ROI7 &lt;- as.data.frame(LPC.Transpose.ROI7)
+names(LPC.DF.ROI7)[1] &lt;- "LPC.ROI.7"
+rm(LPC.Transpose.ROI7) # A little clean up
+
+LPC.Transpose.ROI8 &lt;- t(LPC.grandmean.ROI8)
+LPC.Transpose.ROI8&lt;-t(LPC.Transpose.ROI8)
+LPC.DF.ROI8 &lt;- as.data.frame(LPC.Transpose.ROI8)
+names(LPC.DF.ROI8)[1] &lt;- "LPC.ROI.8"
+rm(LPC.Transpose.ROI8) # A little clean up
+
+LPC.Transpose.ROI9 &lt;- t(LPC.grandmean.ROI9)
+LPC.Transpose.ROI9&lt;-t(LPC.Transpose.ROI9)
+LPC.DF.ROI9 &lt;- as.data.frame(LPC.Transpose.ROI9)
+names(LPC.DF.ROI9)[1] &lt;- "LPC.ROI.9"
+rm(LPC.Transpose.ROI9) # A little clean up
+
+#############################################################
+# CD.4: Set up a new data frame for all LPC Grand Averages  #
+#############################################################
+
+LPC.DF.ROI1 &lt;- cbind(LPC.DF.ROI1, LPC.DF.ROI2, LPC.DF.ROI3, LPC.DF.ROI4, LPC.DF.ROI5, LPC.DF.ROI6, LPC.DF.ROI7, LPC.DF.ROI8, LPC.DF.ROI9)
+CD.LPC.GrandAvg &lt;- LPC.DF.ROI1
+CD.LPC.GrandAvg &lt;-unnest(CD.LPC.GrandAvg)
+
+
+#Renames columns (make sure to add or subtract labels based on your number of ROIs!!!)
+names(CD.LPC.GrandAvg)[1:9] &lt;- c("CD.LPC.ROI1", "CD.LPC.ROI2", "CD.LPC.ROI3", "CD.LPC.ROI4", "CD.LPC.ROI5", "CD.LPC.ROI6", "CD.LPC.ROI7", "CD.LPC.ROI8", "CD.LPC.ROI9")
+
+
+
+
+##################
+# CD.5: LFE ROIs #
+##################
+
+
+
+#Pulls out LFE Data for EACH ROI
+my.LFE.ROI.1&lt;-lapply(my.LFE, function(x) x[ROI1])
+my.LFE.ROI.2&lt;-lapply(my.LFE, function(x) x[ROI2])
+my.LFE.ROI.3&lt;-lapply(my.LFE, function(x) x[ROI3])
+my.LFE.ROI.4&lt;-lapply(my.LFE, function(x) x[ROI4])
+my.LFE.ROI.5&lt;-lapply(my.LFE, function(x) x[ROI5])
+my.LFE.ROI.6&lt;-lapply(my.LFE, function(x) x[ROI6])
+my.LFE.ROI.7&lt;-lapply(my.LFE, function(x) x[ROI7])
+my.LFE.ROI.8&lt;-lapply(my.LFE, function(x) x[ROI8])
+my.LFE.ROI.9&lt;-lapply(my.LFE, function(x) x[ROI9])
+
+#Finds mean of all rows in each ROI
+LFE.rowmeans.ROI1 &lt;- lapply(my.LFE.ROI.1, function(x) rowMeans(x))
+LFE.rowmeans.ROI1 &lt;- lapply(LFE.rowmeans.ROI1, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI2 &lt;- lapply(my.LFE.ROI.2, function(x) rowMeans(x))
+LFE.rowmeans.ROI2 &lt;- lapply(LFE.rowmeans.ROI2, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI3 &lt;- lapply(my.LFE.ROI.3, function(x) rowMeans(x))
+LFE.rowmeans.ROI3 &lt;- lapply(LFE.rowmeans.ROI3, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI4 &lt;- lapply(my.LFE.ROI.4, function(x) rowMeans(x))
+LFE.rowmeans.ROI4 &lt;- lapply(LFE.rowmeans.ROI4, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI5 &lt;- lapply(my.LFE.ROI.5, function(x) rowMeans(x))
+LFE.rowmeans.ROI5 &lt;- lapply(LFE.rowmeans.ROI5, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI6 &lt;- lapply(my.LFE.ROI.6, function(x) rowMeans(x))
+LFE.rowmeans.ROI6 &lt;- lapply(LFE.rowmeans.ROI6, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI7 &lt;- lapply(my.LFE.ROI.7, function(x) rowMeans(x))
+LFE.rowmeans.ROI7 &lt;- lapply(LFE.rowmeans.ROI7, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI8 &lt;- lapply(my.LFE.ROI.8, function(x) rowMeans(x))
+LFE.rowmeans.ROI8 &lt;- lapply(LFE.rowmeans.ROI8, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI9 &lt;- lapply(my.LPC.ROI.9, function(x) rowMeans(x))
+LFE.rowmeans.ROI9 &lt;- lapply(LPC.rowmeans.ROI9, function(x) as.matrix(x))
+
+
+# Finds column mean of the row means (hence, finding the grand average for each ROI)
+# Additional lines of code transposes each matrix (such that subject numbers appear in each row)
+# Then it does a bit of clean up removing any unnecessary variables
+
+LFE.grandmean.ROI1 &lt;- lapply(LFE.rowmeans.ROI1, function(x) colMeans(x))
+LFE.grandmean.ROI2 &lt;- lapply(LFE.rowmeans.ROI2, function(x) colMeans(x))
+LFE.grandmean.ROI3 &lt;- lapply(LFE.rowmeans.ROI3, function(x) colMeans(x))
+LFE.grandmean.ROI4 &lt;- lapply(LFE.rowmeans.ROI4, function(x) colMeans(x))
+LFE.grandmean.ROI5 &lt;- lapply(LFE.rowmeans.ROI5, function(x) colMeans(x))
+LFE.grandmean.ROI6 &lt;- lapply(LFE.rowmeans.ROI6, function(x) colMeans(x))
+LFE.grandmean.ROI7 &lt;- lapply(LFE.rowmeans.ROI7, function(x) colMeans(x))
+LFE.grandmean.ROI8 &lt;- lapply(LFE.rowmeans.ROI8, function(x) colMeans(x))
+LFE.grandmean.ROI9 &lt;- lapply(LFE.rowmeans.ROI9, function(x) colMeans(x))
+
+LFE.Transpose.ROI1 &lt;- t(LFE.grandmean.ROI1)
+LFE.Transpose.ROI1&lt;-t(LFE.Transpose.ROI1)
+LFE.DF.ROI1 &lt;- as.data.frame(LFE.Transpose.ROI1)
+names(LFE.DF.ROI1)[1] &lt;- "LFE.ROI.1"
+rm(LFE.Transpose.ROI1) # A little clean up
+
+LFE.Transpose.ROI2 &lt;- t(LFE.grandmean.ROI2)
+LFE.Transpose.ROI2&lt;-t(LFE.Transpose.ROI2)
+LFE.DF.ROI2 &lt;- as.data.frame(LFE.Transpose.ROI2)
+names(LFE.DF.ROI2)[1] &lt;- "LFE.ROI.2"
+rm(LFE.Transpose.ROI2) # A little clean up
+
+LFE.Transpose.ROI3 &lt;- t(LFE.grandmean.ROI3)
+LFE.Transpose.ROI3&lt;-t(LFE.Transpose.ROI3)
+LFE.DF.ROI3 &lt;- as.data.frame(LFE.Transpose.ROI3)
+names(LFE.DF.ROI3)[1] &lt;- "LFE.ROI.3"
+rm(LFE.Transpose.ROI3) # A little clean up
+
+LFE.Transpose.ROI4 &lt;- t(LFE.grandmean.ROI4)
+LFE.Transpose.ROI4&lt;-t(LFE.Transpose.ROI4)
+LFE.DF.ROI4 &lt;- as.data.frame(LFE.Transpose.ROI4)
+names(LFE.DF.ROI4)[1] &lt;- "LFE.ROI.4"
+rm(LFE.Transpose.ROI4) # A little clean up
+
+LFE.Transpose.ROI5 &lt;- t(LFE.grandmean.ROI5)
+LFE.Transpose.ROI5&lt;-t(LFE.Transpose.ROI5)
+LFE.DF.ROI5 &lt;- as.data.frame(LFE.Transpose.ROI5)
+names(LFE.DF.ROI5)[1] &lt;- "LFE.ROI.5"
+rm(LFE.Transpose.ROI5) # A little clean up
+
+LFE.Transpose.ROI6 &lt;- t(LFE.grandmean.ROI6)
+LFE.Transpose.ROI6&lt;-t(LFE.Transpose.ROI6)
+LFE.DF.ROI6 &lt;- as.data.frame(LFE.Transpose.ROI6)
+names(LPC.DF.ROI6)[1] &lt;- "LFE.ROI.6"
+rm(LFE.Transpose.ROI6) # A little clean up
+
+LFE.Transpose.ROI7 &lt;- t(LFE.grandmean.ROI7)
+LFE.Transpose.ROI7&lt;-t(LFE.Transpose.ROI7)
+LFE.DF.ROI7 &lt;- as.data.frame(LFE.Transpose.ROI7)
+names(LFE.DF.ROI7)[1] &lt;- "LFE.ROI.7"
+rm(LFE.Transpose.ROI7) # A little clean up
+
+LFE.Transpose.ROI8 &lt;- t(LFE.grandmean.ROI8)
+LFE.Transpose.ROI8&lt;-t(LFE.Transpose.ROI8)
+LFE.DF.ROI8 &lt;- as.data.frame(LFE.Transpose.ROI8)
+names(LFE.DF.ROI8)[1] &lt;- "LFE.ROI.8"
+rm(LFE.Transpose.ROI8) # A little clean up
+
+LFE.Transpose.ROI9 &lt;- t(LFE.grandmean.ROI9)
+LFE.Transpose.ROI9&lt;-t(LFE.Transpose.ROI9)
+LFE.DF.ROI9 &lt;- as.data.frame(LFE.Transpose.ROI9)
+names(LFE.DF.ROI9)[1] &lt;- "LFE.ROI.9"
+rm(LFE.Transpose.ROI9) # A little clean up
+
+############################################################
+# CD.6: Set up a new data frame for all LFE Grand Averages #
+############################################################
+
+LFE.DF.ROI1 &lt;- cbind(LFE.DF.ROI1, LFE.DF.ROI2, LFE.DF.ROI3, LFE.DF.ROI4, LFE.DF.ROI5, LFE.DF.ROI6, LFE.DF.ROI7, LFE.DF.ROI8, LFE.DF.ROI9)
+CD.LFE.GrandAvg &lt;- LFE.DF.ROI1
+CD.LFE.GrandAvg &lt;-unnest(CD.LFE.GrandAvg)
+
+
+#Renames columns (make sure to add or subtract labels based on your number of ROIs!!!)
+names(CD.LFE.GrandAvg)[1:9] &lt;- c("CD.LFE.ROI1", "CD.LFE.ROI2", "CD.LFE.ROI3", "CD.LFE.ROI4", "CD.LFE.ROI5", "CD.LFE.ROI6", "CD.LFE.ROI7", "CD.LFE.ROI8", "CD.LFE.ROI9")
+
+# Combines all FN400, LPC, and LFE data frames into one singular data frame
+CD.All.GrandAvg &lt;-cbind(CD.FN400.GrandAvg, CD.LPC.GrandAvg, CD.LFE.GrandAvg)
+
+#Takes the big data grame, writes Data out as a CSV file. Writes out to your working directory.
+#write.csv(All.GrandAvg, file="Can Define Grand Averages.csv", row.names = FALSE)
+
+
+
+
+###################################################
+#  FAM.1: FAMILIAR RESPONSE ANALYSIS STARTS HERE  #
+###################################################
+
+
+
+#Snips out baseline data, sets it to a list named my.data2 (comment out this section if you need it)
+my.data2FAM&lt;-lapply(my.dataFAM, function(x) x[-c(1:49),])
+
+#Selects out data for 300-500 ms interval (N400), sets it to a list named my.FN400
+my.FN400&lt;-lapply(my.data2FAM, function(x) x[84:141,])
+
+#Selects out data for 500-800 ms interval, sets it to a list named my.LPC
+my.LPC&lt;-lapply(my.data2FAM, function(x) x[141:228,])
+
+#Selects out data for 800-1200 ms interval, sets it to a list named my.LFE
+my.LFE&lt;-lapply(my.data2FAM, function(x) x[228:339,])
+
+
+
+
+#####################
+# FAM.2: FN400 ROIs #
+#####################
+
+
+
+
+#Pulls out FN400 Data for EACH ROI
+my.FN400.ROI.1&lt;-lapply(my.FN400, function(x) x[ROI1])
+my.FN400.ROI.2&lt;-lapply(my.FN400, function(x) x[ROI2])
+my.FN400.ROI.3&lt;-lapply(my.FN400, function(x) x[ROI3])
+my.FN400.ROI.4&lt;-lapply(my.FN400, function(x) x[ROI4])
+my.FN400.ROI.5&lt;-lapply(my.FN400, function(x) x[ROI5])
+my.FN400.ROI.6&lt;-lapply(my.FN400, function(x) x[ROI6])
+my.FN400.ROI.7&lt;-lapply(my.FN400, function(x) x[ROI7])
+my.FN400.ROI.8&lt;-lapply(my.FN400, function(x) x[ROI8])
+my.FN400.ROI.9&lt;-lapply(my.FN400, function(x) x[ROI9])
+
+#Finds mean of all rows in each ROI
+FN400.rowmeans.ROI1 &lt;- lapply(my.FN400.ROI.1, function(x) rowMeans(x))
+FN400.rowmeans.ROI1 &lt;- lapply(FN400.rowmeans.ROI1, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI2 &lt;- lapply(my.FN400.ROI.2, function(x) rowMeans(x))
+FN400.rowmeans.ROI2 &lt;- lapply(FN400.rowmeans.ROI2, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI3 &lt;- lapply(my.FN400.ROI.3, function(x) rowMeans(x))
+FN400.rowmeans.ROI3 &lt;- lapply(FN400.rowmeans.ROI3, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI4 &lt;- lapply(my.FN400.ROI.4, function(x) rowMeans(x))
+FN400.rowmeans.ROI4 &lt;- lapply(FN400.rowmeans.ROI4, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI5 &lt;- lapply(my.FN400.ROI.5, function(x) rowMeans(x))
+FN400.rowmeans.ROI5 &lt;- lapply(FN400.rowmeans.ROI5, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI6 &lt;- lapply(my.FN400.ROI.6, function(x) rowMeans(x))
+FN400.rowmeans.ROI6 &lt;- lapply(FN400.rowmeans.ROI6, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI7 &lt;- lapply(my.FN400.ROI.7, function(x) rowMeans(x))
+FN400.rowmeans.ROI7 &lt;- lapply(FN400.rowmeans.ROI7, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI8 &lt;- lapply(my.FN400.ROI.8, function(x) rowMeans(x))
+FN400.rowmeans.ROI8 &lt;- lapply(FN400.rowmeans.ROI8, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI9 &lt;- lapply(my.FN400.ROI.9, function(x) rowMeans(x))
+FN400.rowmeans.ROI9 &lt;- lapply(FN400.rowmeans.ROI9, function(x) as.matrix(x))
+
+# Finds column mean of the row means (hence, finding the grand average for each ROI)
+# Additional lines of code transposes each matrix (such that subject numbers appear in each row)
+# Then it does a bit of clean up removing any unnecessary variables
+
+FN400.grandmean.ROI1 &lt;- lapply(FN400.rowmeans.ROI1, function(x) colMeans(x))
+FN400.grandmean.ROI2 &lt;- lapply(FN400.rowmeans.ROI2, function(x) colMeans(x))
+FN400.grandmean.ROI3 &lt;- lapply(FN400.rowmeans.ROI3, function(x) colMeans(x))
+FN400.grandmean.ROI4 &lt;- lapply(FN400.rowmeans.ROI4, function(x) colMeans(x))
+FN400.grandmean.ROI5 &lt;- lapply(FN400.rowmeans.ROI5, function(x) colMeans(x))
+FN400.grandmean.ROI6 &lt;- lapply(FN400.rowmeans.ROI6, function(x) colMeans(x))
+FN400.grandmean.ROI7 &lt;- lapply(FN400.rowmeans.ROI7, function(x) colMeans(x))
+FN400.grandmean.ROI8 &lt;- lapply(FN400.rowmeans.ROI8, function(x) colMeans(x))
+FN400.grandmean.ROI9 &lt;- lapply(FN400.rowmeans.ROI9, function(x) colMeans(x))
+
+FN400.Transpose.ROI1 &lt;- t(FN400.grandmean.ROI1)
+FN400.Transpose.ROI1&lt;-t(FN400.Transpose.ROI1)
+FN400.DF.ROI1 &lt;- as.data.frame(FN400.Transpose.ROI1)
+names(FN400.DF.ROI1)[1] &lt;- "FN400.ROI.1"
+rm(FN400.Transpose.ROI1) # A little clean up
+
+FN400.Transpose.ROI2 &lt;- t(FN400.grandmean.ROI2)
+FN400.Transpose.ROI2&lt;-t(FN400.Transpose.ROI2)
+FN400.DF.ROI2 &lt;- as.data.frame(FN400.Transpose.ROI2)
+names(FN400.DF.ROI2)[1] &lt;- "FN400.ROI.2"
+rm(FN400.Transpose.ROI2) # A little clean up
+
+FN400.Transpose.ROI3 &lt;- t(FN400.grandmean.ROI3)
+FN400.Transpose.ROI3&lt;-t(FN400.Transpose.ROI3)
+FN400.DF.ROI3 &lt;- as.data.frame(FN400.Transpose.ROI3)
+names(FN400.DF.ROI3)[1] &lt;- "FN400.ROI.3"
+rm(FN400.Transpose.ROI3) # A little clean up
+
+FN400.Transpose.ROI4 &lt;- t(FN400.grandmean.ROI4)
+FN400.Transpose.ROI4&lt;-t(FN400.Transpose.ROI4)
+FN400.DF.ROI4 &lt;- as.data.frame(FN400.Transpose.ROI4)
+names(FN400.DF.ROI4)[1] &lt;- "FN400.ROI.4"
+rm(FN400.Transpose.ROI4) # A little clean up
+
+FN400.Transpose.ROI5 &lt;- t(FN400.grandmean.ROI5)
+FN400.Transpose.ROI5&lt;-t(FN400.Transpose.ROI5)
+FN400.DF.ROI5 &lt;- as.data.frame(FN400.Transpose.ROI5)
+names(FN400.DF.ROI5)[1] &lt;- "FN400.ROI.5"
+rm(FN400.Transpose.ROI5) # A little clean up
+
+FN400.Transpose.ROI6 &lt;- t(FN400.grandmean.ROI6)
+FN400.Transpose.ROI6&lt;-t(FN400.Transpose.ROI6)
+FN400.DF.ROI6 &lt;- as.data.frame(FN400.Transpose.ROI6)
+names(FN400.DF.ROI6)[1] &lt;- "FN400.ROI.6"
+rm(FN400.Transpose.ROI6) # A little clean up
+
+FN400.Transpose.ROI7 &lt;- t(FN400.grandmean.ROI7)
+FN400.Transpose.ROI7&lt;-t(FN400.Transpose.ROI7)
+FN400.DF.ROI7 &lt;- as.data.frame(FN400.Transpose.ROI7)
+names(FN400.DF.ROI7)[1] &lt;- "FN400.ROI.7"
+rm(FN400.Transpose.ROI7) # A little clean up
+
+FN400.Transpose.ROI8 &lt;- t(FN400.grandmean.ROI8)
+FN400.Transpose.ROI8&lt;-t(FN400.Transpose.ROI8)
+FN400.DF.ROI8 &lt;- as.data.frame(FN400.Transpose.ROI8)
+names(FN400.DF.ROI8)[1] &lt;- "FN400.ROI.8"
+rm(FN400.Transpose.ROI8) # A little clean up
+
+FN400.Transpose.ROI9 &lt;- t(FN400.grandmean.ROI9)
+FN400.Transpose.ROI9&lt;-t(FN400.Transpose.ROI9)
+FN400.DF.ROI9 &lt;- as.data.frame(FN400.Transpose.ROI9)
+names(FN400.DF.ROI9)[1] &lt;- "FN400.ROI.9"
+rm(FN400.Transpose.ROI9) # A little clean up
+
+###############################################################
+# FAM.3: Set up a new data frame for all FN400 Grand Averages #
+###############################################################
+
+FN400.DF.ROI1 &lt;- cbind(FN400.DF.ROI1, FN400.DF.ROI2, FN400.DF.ROI3, FN400.DF.ROI4, FN400.DF.ROI5, FN400.DF.ROI6, FN400.DF.ROI7, FN400.DF.ROI8, FN400.DF.ROI9)
+FAM.FN400.GrandAvg &lt;- FN400.DF.ROI1
+FAM.FN400.GrandAvg &lt;-unnest(FAM.FN400.GrandAvg)
+
+
+#Renames columns (make sure to add or subtract labels based on your number of ROIs!!!)
+names(FAM.FN400.GrandAvg)[1:9] &lt;- c("FAM.FN400.ROI1", "FAM.FN400.ROI2", "FAM.FN400.ROI3", "FAM.FN400.ROI4", "FAM.FN400.ROI5", "FAM.FN400.ROI6", "FAM.FN400.ROI7", "FAM.FN400.ROI8", "FAM.FN400.ROI9")
+
+#Set Subject ID Names
+ID&lt;-as.data.frame(names1)
+FAM.FN400.GrandAvg&lt;-cbind(FAM.FN400.GrandAvg)
+
+
+
+###################
+# FAM.4: LPC ROIs #
+###################
+
+
+
+#Pulls out LPC Data for EACH ROI
+my.LPC.ROI.1&lt;-lapply(my.LPC, function(x) x[ROI1])
+my.LPC.ROI.2&lt;-lapply(my.LPC, function(x) x[ROI2])
+my.LPC.ROI.3&lt;-lapply(my.LPC, function(x) x[ROI3])
+my.LPC.ROI.4&lt;-lapply(my.LPC, function(x) x[ROI4])
+my.LPC.ROI.5&lt;-lapply(my.LPC, function(x) x[ROI5])
+my.LPC.ROI.6&lt;-lapply(my.LPC, function(x) x[ROI6])
+my.LPC.ROI.7&lt;-lapply(my.LPC, function(x) x[ROI7])
+my.LPC.ROI.8&lt;-lapply(my.LPC, function(x) x[ROI8])
+my.LPC.ROI.9&lt;-lapply(my.LPC, function(x) x[ROI9])
+
+#Finds mean of all rows in each ROI
+LPC.rowmeans.ROI1 &lt;- lapply(my.LPC.ROI.1, function(x) rowMeans(x))
+LPC.rowmeans.ROI1 &lt;- lapply(LPC.rowmeans.ROI1, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI2 &lt;- lapply(my.LPC.ROI.2, function(x) rowMeans(x))
+LPC.rowmeans.ROI2 &lt;- lapply(LPC.rowmeans.ROI2, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI3 &lt;- lapply(my.LPC.ROI.3, function(x) rowMeans(x))
+LPC.rowmeans.ROI3 &lt;- lapply(LPC.rowmeans.ROI3, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI4 &lt;- lapply(my.LPC.ROI.4, function(x) rowMeans(x))
+LPC.rowmeans.ROI4 &lt;- lapply(LPC.rowmeans.ROI4, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI5 &lt;- lapply(my.LPC.ROI.5, function(x) rowMeans(x))
+LPC.rowmeans.ROI5 &lt;- lapply(LPC.rowmeans.ROI5, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI6 &lt;- lapply(my.LPC.ROI.6, function(x) rowMeans(x))
+LPC.rowmeans.ROI6 &lt;- lapply(LPC.rowmeans.ROI6, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI7 &lt;- lapply(my.LPC.ROI.7, function(x) rowMeans(x))
+LPC.rowmeans.ROI7 &lt;- lapply(LPC.rowmeans.ROI7, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI8 &lt;- lapply(my.LPC.ROI.8, function(x) rowMeans(x))
+LPC.rowmeans.ROI8 &lt;- lapply(LPC.rowmeans.ROI8, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI9 &lt;- lapply(my.LPC.ROI.9, function(x) rowMeans(x))
+LPC.rowmeans.ROI9 &lt;- lapply(LPC.rowmeans.ROI9, function(x) as.matrix(x))
+
+
+# Finds column mean of the row means (hence, finding the grand average for each ROI)
+# Additional lines of code transposes each matrix (such that subject numbers appear in each row)
+# Then it does a bit of clean up removing any unnecessary variables
+
+LPC.grandmean.ROI1 &lt;- lapply(LPC.rowmeans.ROI1, function(x) colMeans(x))
+LPC.grandmean.ROI2 &lt;- lapply(LPC.rowmeans.ROI2, function(x) colMeans(x))
+LPC.grandmean.ROI3 &lt;- lapply(LPC.rowmeans.ROI3, function(x) colMeans(x))
+LPC.grandmean.ROI4 &lt;- lapply(LPC.rowmeans.ROI4, function(x) colMeans(x))
+LPC.grandmean.ROI5 &lt;- lapply(LPC.rowmeans.ROI5, function(x) colMeans(x))
+LPC.grandmean.ROI6 &lt;- lapply(LPC.rowmeans.ROI6, function(x) colMeans(x))
+LPC.grandmean.ROI7 &lt;- lapply(LPC.rowmeans.ROI7, function(x) colMeans(x))
+LPC.grandmean.ROI8 &lt;- lapply(LPC.rowmeans.ROI8, function(x) colMeans(x))
+LPC.grandmean.ROI9 &lt;- lapply(LPC.rowmeans.ROI9, function(x) colMeans(x))
+
+LPC.Transpose.ROI1 &lt;- t(LPC.grandmean.ROI1)
+LPC.Transpose.ROI1&lt;-t(LPC.Transpose.ROI1)
+LPC.DF.ROI1 &lt;- as.data.frame(LPC.Transpose.ROI1)
+names(LPC.DF.ROI1)[1] &lt;- "LPC.ROI.1"
+rm(LPC.Transpose.ROI1) # A little clean up
+
+LPC.Transpose.ROI2 &lt;- t(LPC.grandmean.ROI2)
+LPC.Transpose.ROI2&lt;-t(LPC.Transpose.ROI2)
+LPC.DF.ROI2 &lt;- as.data.frame(LPC.Transpose.ROI2)
+names(LPC.DF.ROI2)[1] &lt;- "LPC.ROI.2"
+rm(LPC.Transpose.ROI2) # A little clean up
+
+LPC.Transpose.ROI3 &lt;- t(LPC.grandmean.ROI3)
+LPC.Transpose.ROI3&lt;-t(LPC.Transpose.ROI3)
+LPC.DF.ROI3 &lt;- as.data.frame(LPC.Transpose.ROI3)
+names(LPC.DF.ROI3)[1] &lt;- "LPC.ROI.3"
+rm(LPC.Transpose.ROI3) # A little clean up
+
+LPC.Transpose.ROI4 &lt;- t(LPC.grandmean.ROI4)
+LPC.Transpose.ROI4&lt;-t(LPC.Transpose.ROI4)
+LPC.DF.ROI4 &lt;- as.data.frame(LPC.Transpose.ROI4)
+names(LPC.DF.ROI4)[1] &lt;- "LPC.ROI.4"
+rm(LPC.Transpose.ROI4) # A little clean up
+
+LPC.Transpose.ROI5 &lt;- t(LPC.grandmean.ROI5)
+LPC.Transpose.ROI5&lt;-t(LPC.Transpose.ROI5)
+LPC.DF.ROI5 &lt;- as.data.frame(LPC.Transpose.ROI5)
+names(LPC.DF.ROI5)[1] &lt;- "LPC.ROI.5"
+rm(LPC.Transpose.ROI5) # A little clean up
+
+LPC.Transpose.ROI6 &lt;- t(LPC.grandmean.ROI6)
+LPC.Transpose.ROI6&lt;-t(LPC.Transpose.ROI6)
+LPC.DF.ROI6 &lt;- as.data.frame(LPC.Transpose.ROI6)
+names(LPC.DF.ROI6)[1] &lt;- "LPC.ROI.6"
+rm(LPC.Transpose.ROI6) # A little clean up
+
+LPC.Transpose.ROI7 &lt;- t(LPC.grandmean.ROI7)
+LPC.Transpose.ROI7&lt;-t(LPC.Transpose.ROI7)
+LPC.DF.ROI7 &lt;- as.data.frame(LPC.Transpose.ROI7)
+names(LPC.DF.ROI7)[1] &lt;- "LPC.ROI.7"
+rm(LPC.Transpose.ROI7) # A little clean up
+
+LPC.Transpose.ROI8 &lt;- t(LPC.grandmean.ROI8)
+LPC.Transpose.ROI8&lt;-t(LPC.Transpose.ROI8)
+LPC.DF.ROI8 &lt;- as.data.frame(LPC.Transpose.ROI8)
+names(LPC.DF.ROI8)[1] &lt;- "LPC.ROI.8"
+rm(LPC.Transpose.ROI8) # A little clean up
+
+LPC.Transpose.ROI9 &lt;- t(LPC.grandmean.ROI9)
+LPC.Transpose.ROI9&lt;-t(LPC.Transpose.ROI9)
+LPC.DF.ROI9 &lt;- as.data.frame(LPC.Transpose.ROI9)
+names(LPC.DF.ROI9)[1] &lt;- "LPC.ROI.9"
+rm(LPC.Transpose.ROI9) # A little clean up
+
+##############################################################
+# FAM.5: Set up a new data frame for all LPC Grand Averages  #
+##############################################################
+
+LPC.DF.ROI1 &lt;- cbind(LPC.DF.ROI1, LPC.DF.ROI2, LPC.DF.ROI3, LPC.DF.ROI4, LPC.DF.ROI5, LPC.DF.ROI6, LPC.DF.ROI7, LPC.DF.ROI8, LPC.DF.ROI9)
+FAM.LPC.GrandAvg &lt;- LPC.DF.ROI1
+FAM.LPC.GrandAvg &lt;-unnest(FAM.LPC.GrandAvg)
+
+
+#Renames columns (make sure to add or subtract labels based on your number of ROIs!!!)
+names(FAM.LPC.GrandAvg)[1:9] &lt;- c("FAM.LPC.ROI1", "FAM.LPC.ROI2", "FAM.LPC.ROI3", "FAM.LPC.ROI4", "FAM.LPC.ROI5", "FAM.LPC.ROI6", "FAM.LPC.ROI7", "FAM.LPC.ROI8", "FAM.LPC.ROI9")
+
+
+
+###################
+# FAM.6: LFE ROIs #
+###################
+
+
+
+#Pulls out LFE Data for EACH ROI
+my.LFE.ROI.1&lt;-lapply(my.LFE, function(x) x[ROI1])
+my.LFE.ROI.2&lt;-lapply(my.LFE, function(x) x[ROI2])
+my.LFE.ROI.3&lt;-lapply(my.LFE, function(x) x[ROI3])
+my.LFE.ROI.4&lt;-lapply(my.LFE, function(x) x[ROI4])
+my.LFE.ROI.5&lt;-lapply(my.LFE, function(x) x[ROI5])
+my.LFE.ROI.6&lt;-lapply(my.LFE, function(x) x[ROI6])
+my.LFE.ROI.7&lt;-lapply(my.LFE, function(x) x[ROI7])
+my.LFE.ROI.8&lt;-lapply(my.LFE, function(x) x[ROI8])
+my.LFE.ROI.9&lt;-lapply(my.LFE, function(x) x[ROI9])
+
+#Finds mean of all rows in each ROI
+LFE.rowmeans.ROI1 &lt;- lapply(my.LFE.ROI.1, function(x) rowMeans(x))
+LFE.rowmeans.ROI1 &lt;- lapply(LFE.rowmeans.ROI1, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI2 &lt;- lapply(my.LFE.ROI.2, function(x) rowMeans(x))
+LFE.rowmeans.ROI2 &lt;- lapply(LFE.rowmeans.ROI2, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI3 &lt;- lapply(my.LFE.ROI.3, function(x) rowMeans(x))
+LFE.rowmeans.ROI3 &lt;- lapply(LFE.rowmeans.ROI3, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI4 &lt;- lapply(my.LFE.ROI.4, function(x) rowMeans(x))
+LFE.rowmeans.ROI4 &lt;- lapply(LFE.rowmeans.ROI4, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI5 &lt;- lapply(my.LFE.ROI.5, function(x) rowMeans(x))
+LFE.rowmeans.ROI5 &lt;- lapply(LFE.rowmeans.ROI5, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI6 &lt;- lapply(my.LFE.ROI.6, function(x) rowMeans(x))
+LFE.rowmeans.ROI6 &lt;- lapply(LFE.rowmeans.ROI6, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI7 &lt;- lapply(my.LFE.ROI.7, function(x) rowMeans(x))
+LFE.rowmeans.ROI7 &lt;- lapply(LFE.rowmeans.ROI7, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI8 &lt;- lapply(my.LFE.ROI.8, function(x) rowMeans(x))
+LFE.rowmeans.ROI8 &lt;- lapply(LFE.rowmeans.ROI8, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI9 &lt;- lapply(my.LPC.ROI.9, function(x) rowMeans(x))
+LFE.rowmeans.ROI9 &lt;- lapply(LPC.rowmeans.ROI9, function(x) as.matrix(x))
+
+
+# Finds column mean of the row means (hence, finding the grand average for each ROI)
+# Additional lines of code transposes each matrix (such that subject numbers appear in each row)
+# Then it does a bit of clean up removing any unnecessary variables
+
+LFE.grandmean.ROI1 &lt;- lapply(LFE.rowmeans.ROI1, function(x) colMeans(x))
+LFE.grandmean.ROI2 &lt;- lapply(LFE.rowmeans.ROI2, function(x) colMeans(x))
+LFE.grandmean.ROI3 &lt;- lapply(LFE.rowmeans.ROI3, function(x) colMeans(x))
+LFE.grandmean.ROI4 &lt;- lapply(LFE.rowmeans.ROI4, function(x) colMeans(x))
+LFE.grandmean.ROI5 &lt;- lapply(LFE.rowmeans.ROI5, function(x) colMeans(x))
+LFE.grandmean.ROI6 &lt;- lapply(LFE.rowmeans.ROI6, function(x) colMeans(x))
+LFE.grandmean.ROI7 &lt;- lapply(LFE.rowmeans.ROI7, function(x) colMeans(x))
+LFE.grandmean.ROI8 &lt;- lapply(LFE.rowmeans.ROI8, function(x) colMeans(x))
+LFE.grandmean.ROI9 &lt;- lapply(LFE.rowmeans.ROI9, function(x) colMeans(x))
+
+LFE.Transpose.ROI1 &lt;- t(LFE.grandmean.ROI1)
+LFE.Transpose.ROI1&lt;-t(LFE.Transpose.ROI1)
+LFE.DF.ROI1 &lt;- as.data.frame(LFE.Transpose.ROI1)
+names(LFE.DF.ROI1)[1] &lt;- "LFE.ROI.1"
+rm(LFE.Transpose.ROI1) # A little clean up
+
+LFE.Transpose.ROI2 &lt;- t(LFE.grandmean.ROI2)
+LFE.Transpose.ROI2&lt;-t(LFE.Transpose.ROI2)
+LFE.DF.ROI2 &lt;- as.data.frame(LFE.Transpose.ROI2)
+names(LFE.DF.ROI2)[1] &lt;- "LFE.ROI.2"
+rm(LFE.Transpose.ROI2) # A little clean up
+
+LFE.Transpose.ROI3 &lt;- t(LFE.grandmean.ROI3)
+LFE.Transpose.ROI3&lt;-t(LFE.Transpose.ROI3)
+LFE.DF.ROI3 &lt;- as.data.frame(LFE.Transpose.ROI3)
+names(LFE.DF.ROI3)[1] &lt;- "LFE.ROI.3"
+rm(LFE.Transpose.ROI3) # A little clean up
+
+LFE.Transpose.ROI4 &lt;- t(LFE.grandmean.ROI4)
+LFE.Transpose.ROI4&lt;-t(LFE.Transpose.ROI4)
+LFE.DF.ROI4 &lt;- as.data.frame(LFE.Transpose.ROI4)
+names(LFE.DF.ROI4)[1] &lt;- "LFE.ROI.4"
+rm(LFE.Transpose.ROI4) # A little clean up
+
+LFE.Transpose.ROI5 &lt;- t(LFE.grandmean.ROI5)
+LFE.Transpose.ROI5&lt;-t(LFE.Transpose.ROI5)
+LFE.DF.ROI5 &lt;- as.data.frame(LFE.Transpose.ROI5)
+names(LFE.DF.ROI5)[1] &lt;- "LFE.ROI.5"
+rm(LFE.Transpose.ROI5) # A little clean up
+
+LFE.Transpose.ROI6 &lt;- t(LFE.grandmean.ROI6)
+LFE.Transpose.ROI6&lt;-t(LFE.Transpose.ROI6)
+LFE.DF.ROI6 &lt;- as.data.frame(LFE.Transpose.ROI6)
+names(LPC.DF.ROI6)[1] &lt;- "LFE.ROI.6"
+rm(LFE.Transpose.ROI6) # A little clean up
+
+LFE.Transpose.ROI7 &lt;- t(LFE.grandmean.ROI7)
+LFE.Transpose.ROI7&lt;-t(LFE.Transpose.ROI7)
+LFE.DF.ROI7 &lt;- as.data.frame(LFE.Transpose.ROI7)
+names(LFE.DF.ROI7)[1] &lt;- "LFE.ROI.7"
+rm(LFE.Transpose.ROI7) # A little clean up
+
+LFE.Transpose.ROI8 &lt;- t(LFE.grandmean.ROI8)
+LFE.Transpose.ROI8&lt;-t(LFE.Transpose.ROI8)
+LFE.DF.ROI8 &lt;- as.data.frame(LFE.Transpose.ROI8)
+names(LFE.DF.ROI8)[1] &lt;- "LFE.ROI.8"
+rm(LFE.Transpose.ROI8) # A little clean up
+
+LFE.Transpose.ROI9 &lt;- t(LFE.grandmean.ROI9)
+LFE.Transpose.ROI9&lt;-t(LFE.Transpose.ROI9)
+LFE.DF.ROI9 &lt;- as.data.frame(LFE.Transpose.ROI9)
+names(LFE.DF.ROI9)[1] &lt;- "LFE.ROI.9"
+rm(LFE.Transpose.ROI9) # A little clean up
+
+############################################################
+# FAM.7 Set up a new data frame for all LFE Grand Averages #
+############################################################
+
+LFE.DF.ROI1 &lt;- cbind(LFE.DF.ROI1, LFE.DF.ROI2, LFE.DF.ROI3, LFE.DF.ROI4, LFE.DF.ROI5, LFE.DF.ROI6, LFE.DF.ROI7, LFE.DF.ROI8, LFE.DF.ROI9)
+FAM.LFE.GrandAvg &lt;- LFE.DF.ROI1
+FAM.LFE.GrandAvg &lt;-unnest(FAM.LFE.GrandAvg)
+
+
+#Renames columns (make sure to add or subtract labels based on your number of ROIs!!!)
+names(FAM.LFE.GrandAvg)[1:9] &lt;- c("FAM.LFE.ROI1", "FAM.LFE.ROI2", "FAM.LFE.ROI3", "FAM.LFE.ROI4", "FAM.LFE.ROI5", "FAM.LFE.ROI6", "FAM.LFE.ROI7", "FAM.LFE.ROI8", "FAM.LFE.ROI9")
+FAM.All.GrandAvg &lt;-cbind(FAM.FN400.GrandAvg, FAM.LPC.GrandAvg, FAM.LFE.GrandAvg)
+
+
+
+
+
+####################################################
+###################################################
+
+
+
+
+#Snips out baseline data, sets it to a list named my.data2 (comment out this section if you need it)
+my.data2DK&lt;-lapply(my.dataDK, function(x) x[-c(1:49),])
+
+#Selects out data for 300-500 ms interval (N400), sets it to a list named my.FN400
+my.FN400&lt;-lapply(my.data2DK, function(x) x[84:141,])
+
+#Selects out data for 500-800 ms interval, sets it to a list named my.LPC
+my.LPC&lt;-lapply(my.data2DK, function(x) x[141:228,])
+
+#Selects out data for 800-1200 ms interval, sets it to a list named my.LFE
+my.LFE&lt;-lapply(my.data2DK, function(x) x[228:339,])
+# DK.1: DON'T KNOW RESPONSE ANALYSIS STARTS HERE  
+
+
+
+###################
+# DK.2 FN400 ROIs #
+###################
+
+
+
+
+#Pulls out FN400 Data for EACH ROI
+my.FN400.ROI.1&lt;-lapply(my.FN400, function(x) x[ROI1])
+my.FN400.ROI.2&lt;-lapply(my.FN400, function(x) x[ROI2])
+my.FN400.ROI.3&lt;-lapply(my.FN400, function(x) x[ROI3])
+my.FN400.ROI.4&lt;-lapply(my.FN400, function(x) x[ROI4])
+my.FN400.ROI.5&lt;-lapply(my.FN400, function(x) x[ROI5])
+my.FN400.ROI.6&lt;-lapply(my.FN400, function(x) x[ROI6])
+my.FN400.ROI.7&lt;-lapply(my.FN400, function(x) x[ROI7])
+my.FN400.ROI.8&lt;-lapply(my.FN400, function(x) x[ROI8])
+my.FN400.ROI.9&lt;-lapply(my.FN400, function(x) x[ROI9])
+
+#Finds mean of all rows in each ROI
+FN400.rowmeans.ROI1 &lt;- lapply(my.FN400.ROI.1, function(x) rowMeans(x))
+FN400.rowmeans.ROI1 &lt;- lapply(FN400.rowmeans.ROI1, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI2 &lt;- lapply(my.FN400.ROI.2, function(x) rowMeans(x))
+FN400.rowmeans.ROI2 &lt;- lapply(FN400.rowmeans.ROI2, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI3 &lt;- lapply(my.FN400.ROI.3, function(x) rowMeans(x))
+FN400.rowmeans.ROI3 &lt;- lapply(FN400.rowmeans.ROI3, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI4 &lt;- lapply(my.FN400.ROI.4, function(x) rowMeans(x))
+FN400.rowmeans.ROI4 &lt;- lapply(FN400.rowmeans.ROI4, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI5 &lt;- lapply(my.FN400.ROI.5, function(x) rowMeans(x))
+FN400.rowmeans.ROI5 &lt;- lapply(FN400.rowmeans.ROI5, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI6 &lt;- lapply(my.FN400.ROI.6, function(x) rowMeans(x))
+FN400.rowmeans.ROI6 &lt;- lapply(FN400.rowmeans.ROI6, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI7 &lt;- lapply(my.FN400.ROI.7, function(x) rowMeans(x))
+FN400.rowmeans.ROI7 &lt;- lapply(FN400.rowmeans.ROI7, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI8 &lt;- lapply(my.FN400.ROI.8, function(x) rowMeans(x))
+FN400.rowmeans.ROI8 &lt;- lapply(FN400.rowmeans.ROI8, function(x) as.matrix(x))
+
+FN400.rowmeans.ROI9 &lt;- lapply(my.FN400.ROI.9, function(x) rowMeans(x))
+FN400.rowmeans.ROI9 &lt;- lapply(FN400.rowmeans.ROI9, function(x) as.matrix(x))
+
+# Finds column mean of the row means (hence, finding the grand average for each ROI)
+# Additional lines of code transposes each matrix (such that subject numbers appear in each row)
+# Then it does a bit of clean up removing any unnecessary variables
+
+FN400.grandmean.ROI1 &lt;- lapply(FN400.rowmeans.ROI1, function(x) colMeans(x))
+FN400.grandmean.ROI2 &lt;- lapply(FN400.rowmeans.ROI2, function(x) colMeans(x))
+FN400.grandmean.ROI3 &lt;- lapply(FN400.rowmeans.ROI3, function(x) colMeans(x))
+FN400.grandmean.ROI4 &lt;- lapply(FN400.rowmeans.ROI4, function(x) colMeans(x))
+FN400.grandmean.ROI5 &lt;- lapply(FN400.rowmeans.ROI5, function(x) colMeans(x))
+FN400.grandmean.ROI6 &lt;- lapply(FN400.rowmeans.ROI6, function(x) colMeans(x))
+FN400.grandmean.ROI7 &lt;- lapply(FN400.rowmeans.ROI7, function(x) colMeans(x))
+FN400.grandmean.ROI8 &lt;- lapply(FN400.rowmeans.ROI8, function(x) colMeans(x))
+FN400.grandmean.ROI9 &lt;- lapply(FN400.rowmeans.ROI9, function(x) colMeans(x))
+
+FN400.Transpose.ROI1 &lt;- t(FN400.grandmean.ROI1)
+FN400.Transpose.ROI1&lt;-t(FN400.Transpose.ROI1)
+FN400.DF.ROI1 &lt;- as.data.frame(FN400.Transpose.ROI1)
+names(FN400.DF.ROI1)[1] &lt;- "FN400.ROI.1"
+rm(FN400.Transpose.ROI1) # A little clean up
+
+FN400.Transpose.ROI2 &lt;- t(FN400.grandmean.ROI2)
+FN400.Transpose.ROI2&lt;-t(FN400.Transpose.ROI2)
+FN400.DF.ROI2 &lt;- as.data.frame(FN400.Transpose.ROI2)
+names(FN400.DF.ROI2)[1] &lt;- "FN400.ROI.2"
+rm(FN400.Transpose.ROI2) # A little clean up
+
+FN400.Transpose.ROI3 &lt;- t(FN400.grandmean.ROI3)
+FN400.Transpose.ROI3&lt;-t(FN400.Transpose.ROI3)
+FN400.DF.ROI3 &lt;- as.data.frame(FN400.Transpose.ROI3)
+names(FN400.DF.ROI3)[1] &lt;- "FN400.ROI.3"
+rm(FN400.Transpose.ROI3) # A little clean up
+
+FN400.Transpose.ROI4 &lt;- t(FN400.grandmean.ROI4)
+FN400.Transpose.ROI4&lt;-t(FN400.Transpose.ROI4)
+FN400.DF.ROI4 &lt;- as.data.frame(FN400.Transpose.ROI4)
+names(FN400.DF.ROI4)[1] &lt;- "FN400.ROI.4"
+rm(FN400.Transpose.ROI4) # A little clean up
+
+FN400.Transpose.ROI5 &lt;- t(FN400.grandmean.ROI5)
+FN400.Transpose.ROI5&lt;-t(FN400.Transpose.ROI5)
+FN400.DF.ROI5 &lt;- as.data.frame(FN400.Transpose.ROI5)
+names(FN400.DF.ROI5)[1] &lt;- "FN400.ROI.5"
+rm(FN400.Transpose.ROI5) # A little clean up
+
+FN400.Transpose.ROI6 &lt;- t(FN400.grandmean.ROI6)
+FN400.Transpose.ROI6&lt;-t(FN400.Transpose.ROI6)
+FN400.DF.ROI6 &lt;- as.data.frame(FN400.Transpose.ROI6)
+names(FN400.DF.ROI6)[1] &lt;- "FN400.ROI.6"
+rm(FN400.Transpose.ROI6) # A little clean up
+
+FN400.Transpose.ROI7 &lt;- t(FN400.grandmean.ROI7)
+FN400.Transpose.ROI7&lt;-t(FN400.Transpose.ROI7)
+FN400.DF.ROI7 &lt;- as.data.frame(FN400.Transpose.ROI7)
+names(FN400.DF.ROI7)[1] &lt;- "FN400.ROI.7"
+rm(FN400.Transpose.ROI7) # A little clean up
+
+FN400.Transpose.ROI8 &lt;- t(FN400.grandmean.ROI8)
+FN400.Transpose.ROI8&lt;-t(FN400.Transpose.ROI8)
+FN400.DF.ROI8 &lt;- as.data.frame(FN400.Transpose.ROI8)
+names(FN400.DF.ROI8)[1] &lt;- "FN400.ROI.8"
+rm(FN400.Transpose.ROI8) # A little clean up
+
+FN400.Transpose.ROI9 &lt;- t(FN400.grandmean.ROI9)
+FN400.Transpose.ROI9&lt;-t(FN400.Transpose.ROI9)
+FN400.DF.ROI9 &lt;- as.data.frame(FN400.Transpose.ROI9)
+names(FN400.DF.ROI9)[1] &lt;- "FN400.ROI.9"
+rm(FN400.Transpose.ROI9) # A little clean up
+
+##############################################################
+# DK.3: Set up a new data frame for all FN400 Grand Averages #
+##############################################################
+
+FN400.DF.ROI1 &lt;- cbind(FN400.DF.ROI1, FN400.DF.ROI2, FN400.DF.ROI3, FN400.DF.ROI4, FN400.DF.ROI5, FN400.DF.ROI6, FN400.DF.ROI7, FN400.DF.ROI8, FN400.DF.ROI9)
+DK.FN400.GrandAvg &lt;- FN400.DF.ROI1
+DK.FN400.GrandAvg &lt;-unnest(DK.FN400.GrandAvg)
+
+
+#Renames columns (make sure to add or subtract labels based on your number of ROIs!!!)
+names(DK.FN400.GrandAvg)[1:9] &lt;- c("DK.FN400.ROI1", "DK.FN400.ROI2", "DK.FN400.ROI3", "DK.FN400.ROI4", "DK.FN400.ROI5", "DK.FN400.ROI6", "DK.FN400.ROI7", "DK.FN400.ROI8", "DK.FN400.ROI9")
+
+#Set Subject ID Names
+DK.FN400.GrandAvg&lt;-cbind(DK.FN400.GrandAvg)
+
+
+
+##################
+# DK.4: LPC ROIs #
+##################
+
+
+
+#Pulls out LPC Data for EACH ROI
+my.LPC.ROI.1&lt;-lapply(my.LPC, function(x) x[ROI1])
+my.LPC.ROI.2&lt;-lapply(my.LPC, function(x) x[ROI2])
+my.LPC.ROI.3&lt;-lapply(my.LPC, function(x) x[ROI3])
+my.LPC.ROI.4&lt;-lapply(my.LPC, function(x) x[ROI4])
+my.LPC.ROI.5&lt;-lapply(my.LPC, function(x) x[ROI5])
+my.LPC.ROI.6&lt;-lapply(my.LPC, function(x) x[ROI6])
+my.LPC.ROI.7&lt;-lapply(my.LPC, function(x) x[ROI7])
+my.LPC.ROI.8&lt;-lapply(my.LPC, function(x) x[ROI8])
+my.LPC.ROI.9&lt;-lapply(my.LPC, function(x) x[ROI9])
+
+#Finds mean of all rows in each ROI
+LPC.rowmeans.ROI1 &lt;- lapply(my.LPC.ROI.1, function(x) rowMeans(x))
+LPC.rowmeans.ROI1 &lt;- lapply(LPC.rowmeans.ROI1, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI2 &lt;- lapply(my.LPC.ROI.2, function(x) rowMeans(x))
+LPC.rowmeans.ROI2 &lt;- lapply(LPC.rowmeans.ROI2, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI3 &lt;- lapply(my.LPC.ROI.3, function(x) rowMeans(x))
+LPC.rowmeans.ROI3 &lt;- lapply(LPC.rowmeans.ROI3, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI4 &lt;- lapply(my.LPC.ROI.4, function(x) rowMeans(x))
+LPC.rowmeans.ROI4 &lt;- lapply(LPC.rowmeans.ROI4, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI5 &lt;- lapply(my.LPC.ROI.5, function(x) rowMeans(x))
+LPC.rowmeans.ROI5 &lt;- lapply(LPC.rowmeans.ROI5, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI6 &lt;- lapply(my.LPC.ROI.6, function(x) rowMeans(x))
+LPC.rowmeans.ROI6 &lt;- lapply(LPC.rowmeans.ROI6, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI7 &lt;- lapply(my.LPC.ROI.7, function(x) rowMeans(x))
+LPC.rowmeans.ROI7 &lt;- lapply(LPC.rowmeans.ROI7, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI8 &lt;- lapply(my.LPC.ROI.8, function(x) rowMeans(x))
+LPC.rowmeans.ROI8 &lt;- lapply(LPC.rowmeans.ROI8, function(x) as.matrix(x))
+
+LPC.rowmeans.ROI9 &lt;- lapply(my.LPC.ROI.9, function(x) rowMeans(x))
+LPC.rowmeans.ROI9 &lt;- lapply(LPC.rowmeans.ROI9, function(x) as.matrix(x))
+
+
+# Finds column mean of the row means (hence, finding the grand average for each ROI)
+# Additional lines of code transposes each matrix (such that subject numbers appear in each row)
+# Then it does a bit of clean up removing any unnecessary variables
+
+LPC.grandmean.ROI1 &lt;- lapply(LPC.rowmeans.ROI1, function(x) colMeans(x))
+LPC.grandmean.ROI2 &lt;- lapply(LPC.rowmeans.ROI2, function(x) colMeans(x))
+LPC.grandmean.ROI3 &lt;- lapply(LPC.rowmeans.ROI3, function(x) colMeans(x))
+LPC.grandmean.ROI4 &lt;- lapply(LPC.rowmeans.ROI4, function(x) colMeans(x))
+LPC.grandmean.ROI5 &lt;- lapply(LPC.rowmeans.ROI5, function(x) colMeans(x))
+LPC.grandmean.ROI6 &lt;- lapply(LPC.rowmeans.ROI6, function(x) colMeans(x))
+LPC.grandmean.ROI7 &lt;- lapply(LPC.rowmeans.ROI7, function(x) colMeans(x))
+LPC.grandmean.ROI8 &lt;- lapply(LPC.rowmeans.ROI8, function(x) colMeans(x))
+LPC.grandmean.ROI9 &lt;- lapply(LPC.rowmeans.ROI9, function(x) colMeans(x))
+
+LPC.Transpose.ROI1 &lt;- t(LPC.grandmean.ROI1)
+LPC.Transpose.ROI1&lt;-t(LPC.Transpose.ROI1)
+LPC.DF.ROI1 &lt;- as.data.frame(LPC.Transpose.ROI1)
+names(LPC.DF.ROI1)[1] &lt;- "LPC.ROI.1"
+rm(LPC.Transpose.ROI1) # A little clean up
+
+LPC.Transpose.ROI2 &lt;- t(LPC.grandmean.ROI2)
+LPC.Transpose.ROI2&lt;-t(LPC.Transpose.ROI2)
+LPC.DF.ROI2 &lt;- as.data.frame(LPC.Transpose.ROI2)
+names(LPC.DF.ROI2)[1] &lt;- "LPC.ROI.2"
+rm(LPC.Transpose.ROI2) # A little clean up
+
+LPC.Transpose.ROI3 &lt;- t(LPC.grandmean.ROI3)
+LPC.Transpose.ROI3&lt;-t(LPC.Transpose.ROI3)
+LPC.DF.ROI3 &lt;- as.data.frame(LPC.Transpose.ROI3)
+names(LPC.DF.ROI3)[1] &lt;- "LPC.ROI.3"
+rm(LPC.Transpose.ROI3) # A little clean up
+
+LPC.Transpose.ROI4 &lt;- t(LPC.grandmean.ROI4)
+LPC.Transpose.ROI4&lt;-t(LPC.Transpose.ROI4)
+LPC.DF.ROI4 &lt;- as.data.frame(LPC.Transpose.ROI4)
+names(LPC.DF.ROI4)[1] &lt;- "LPC.ROI.4"
+rm(LPC.Transpose.ROI4) # A little clean up
+
+LPC.Transpose.ROI5 &lt;- t(LPC.grandmean.ROI5)
+LPC.Transpose.ROI5&lt;-t(LPC.Transpose.ROI5)
+LPC.DF.ROI5 &lt;- as.data.frame(LPC.Transpose.ROI5)
+names(LPC.DF.ROI5)[1] &lt;- "LPC.ROI.5"
+rm(LPC.Transpose.ROI5) # A little clean up
+
+LPC.Transpose.ROI6 &lt;- t(LPC.grandmean.ROI6)
+LPC.Transpose.ROI6&lt;-t(LPC.Transpose.ROI6)
+LPC.DF.ROI6 &lt;- as.data.frame(LPC.Transpose.ROI6)
+names(LPC.DF.ROI6)[1] &lt;- "LPC.ROI.6"
+rm(LPC.Transpose.ROI6) # A little clean up
+
+LPC.Transpose.ROI7 &lt;- t(LPC.grandmean.ROI7)
+LPC.Transpose.ROI7&lt;-t(LPC.Transpose.ROI7)
+LPC.DF.ROI7 &lt;- as.data.frame(LPC.Transpose.ROI7)
+names(LPC.DF.ROI7)[1] &lt;- "LPC.ROI.7"
+rm(LPC.Transpose.ROI7) # A little clean up
+
+LPC.Transpose.ROI8 &lt;- t(LPC.grandmean.ROI8)
+LPC.Transpose.ROI8&lt;-t(LPC.Transpose.ROI8)
+LPC.DF.ROI8 &lt;- as.data.frame(LPC.Transpose.ROI8)
+names(LPC.DF.ROI8)[1] &lt;- "LPC.ROI.8"
+rm(LPC.Transpose.ROI8) # A little clean up
+
+LPC.Transpose.ROI9 &lt;- t(LPC.grandmean.ROI9)
+LPC.Transpose.ROI9&lt;-t(LPC.Transpose.ROI9)
+LPC.DF.ROI9 &lt;- as.data.frame(LPC.Transpose.ROI9)
+names(LPC.DF.ROI9)[1] &lt;- "LPC.ROI.9"
+rm(LPC.Transpose.ROI9) # A little clean up
+
+#############################################################
+# DK.5: Set up a new data frame for all LPC Grand Averages  #
+#############################################################
+
+LPC.DF.ROI1 &lt;- cbind(LPC.DF.ROI1, LPC.DF.ROI2, LPC.DF.ROI3, LPC.DF.ROI4, LPC.DF.ROI5, LPC.DF.ROI6, LPC.DF.ROI7, LPC.DF.ROI8, LPC.DF.ROI9)
+DK.LPC.GrandAvg &lt;- LPC.DF.ROI1
+DK.LPC.GrandAvg &lt;-unnest(DK.LPC.GrandAvg)
+
+
+#Renames columns (make sure to add or subtract labels based on your number of ROIs!!!)
+names(DK.LPC.GrandAvg)[1:9] &lt;- c("DK.LPC.ROI1", "DK.LPC.ROI2", "DK.LPC.ROI3", "DK.LPC.ROI4", "DK.LPC.ROI5", "DK.LPC.ROI6", "DK.LPC.ROI7", "DK.LPC.ROI8", "DK.LPC.ROI9")
+
+
+
+
+##################
+# DK.6: LFE ROIs #
+##################
+
+
+
+#Pulls out LFE Data for EACH ROI
+my.LFE.ROI.1&lt;-lapply(my.LFE, function(x) x[ROI1])
+my.LFE.ROI.2&lt;-lapply(my.LFE, function(x) x[ROI2])
+my.LFE.ROI.3&lt;-lapply(my.LFE, function(x) x[ROI3])
+my.LFE.ROI.4&lt;-lapply(my.LFE, function(x) x[ROI4])
+my.LFE.ROI.5&lt;-lapply(my.LFE, function(x) x[ROI5])
+my.LFE.ROI.6&lt;-lapply(my.LFE, function(x) x[ROI6])
+my.LFE.ROI.7&lt;-lapply(my.LFE, function(x) x[ROI7])
+my.LFE.ROI.8&lt;-lapply(my.LFE, function(x) x[ROI8])
+my.LFE.ROI.9&lt;-lapply(my.LFE, function(x) x[ROI9])
+
+#Finds mean of all rows in each ROI
+LFE.rowmeans.ROI1 &lt;- lapply(my.LFE.ROI.1, function(x) rowMeans(x))
+LFE.rowmeans.ROI1 &lt;- lapply(LFE.rowmeans.ROI1, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI2 &lt;- lapply(my.LFE.ROI.2, function(x) rowMeans(x))
+LFE.rowmeans.ROI2 &lt;- lapply(LFE.rowmeans.ROI2, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI3 &lt;- lapply(my.LFE.ROI.3, function(x) rowMeans(x))
+LFE.rowmeans.ROI3 &lt;- lapply(LFE.rowmeans.ROI3, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI4 &lt;- lapply(my.LFE.ROI.4, function(x) rowMeans(x))
+LFE.rowmeans.ROI4 &lt;- lapply(LFE.rowmeans.ROI4, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI5 &lt;- lapply(my.LFE.ROI.5, function(x) rowMeans(x))
+LFE.rowmeans.ROI5 &lt;- lapply(LFE.rowmeans.ROI5, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI6 &lt;- lapply(my.LFE.ROI.6, function(x) rowMeans(x))
+LFE.rowmeans.ROI6 &lt;- lapply(LFE.rowmeans.ROI6, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI7 &lt;- lapply(my.LFE.ROI.7, function(x) rowMeans(x))
+LFE.rowmeans.ROI7 &lt;- lapply(LFE.rowmeans.ROI7, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI8 &lt;- lapply(my.LFE.ROI.8, function(x) rowMeans(x))
+LFE.rowmeans.ROI8 &lt;- lapply(LFE.rowmeans.ROI8, function(x) as.matrix(x))
+
+LFE.rowmeans.ROI9 &lt;- lapply(my.LPC.ROI.9, function(x) rowMeans(x))
+LFE.rowmeans.ROI9 &lt;- lapply(LPC.rowmeans.ROI9, function(x) as.matrix(x))
+
+
+# Finds column mean of the row means (hence, finding the grand average for each ROI)
+# Additional lines of code transposes each matrix (such that subject numbers appear in each row)
+# Then it does a bit of clean up removing any unnecessary variables
+
+LFE.grandmean.ROI1 &lt;- lapply(LFE.rowmeans.ROI1, function(x) colMeans(x))
+LFE.grandmean.ROI2 &lt;- lapply(LFE.rowmeans.ROI2, function(x) colMeans(x))
+LFE.grandmean.ROI3 &lt;- lapply(LFE.rowmeans.ROI3, function(x) colMeans(x))
+LFE.grandmean.ROI4 &lt;- lapply(LFE.rowmeans.ROI4, function(x) colMeans(x))
+LFE.grandmean.ROI5 &lt;- lapply(LFE.rowmeans.ROI5, function(x) colMeans(x))
+LFE.grandmean.ROI6 &lt;- lapply(LFE.rowmeans.ROI6, function(x) colMeans(x))
+LFE.grandmean.ROI7 &lt;- lapply(LFE.rowmeans.ROI7, function(x) colMeans(x))
+LFE.grandmean.ROI8 &lt;- lapply(LFE.rowmeans.ROI8, function(x) colMeans(x))
+LFE.grandmean.ROI9 &lt;- lapply(LFE.rowmeans.ROI9, function(x) colMeans(x))
+
+LFE.Transpose.ROI1 &lt;- t(LFE.grandmean.ROI1)
+LFE.Transpose.ROI1&lt;-t(LFE.Transpose.ROI1)
+LFE.DF.ROI1 &lt;- as.data.frame(LFE.Transpose.ROI1)
+names(LFE.DF.ROI1)[1] &lt;- "LFE.ROI.1"
+rm(LFE.Transpose.ROI1) # A little clean up
+
+LFE.Transpose.ROI2 &lt;- t(LFE.grandmean.ROI2)
+LFE.Transpose.ROI2&lt;-t(LFE.Transpose.ROI2)
+LFE.DF.ROI2 &lt;- as.data.frame(LFE.Transpose.ROI2)
+names(LFE.DF.ROI2)[1] &lt;- "LFE.ROI.2"
+rm(LFE.Transpose.ROI2) # A little clean up
+
+LFE.Transpose.ROI3 &lt;- t(LFE.grandmean.ROI3)
+LFE.Transpose.ROI3&lt;-t(LFE.Transpose.ROI3)
+LFE.DF.ROI3 &lt;- as.data.frame(LFE.Transpose.ROI3)
+names(LFE.DF.ROI3)[1] &lt;- "LFE.ROI.3"
+rm(LFE.Transpose.ROI3) # A little clean up
+
+LFE.Transpose.ROI4 &lt;- t(LFE.grandmean.ROI4)
+LFE.Transpose.ROI4&lt;-t(LFE.Transpose.ROI4)
+LFE.DF.ROI4 &lt;- as.data.frame(LFE.Transpose.ROI4)
+names(LFE.DF.ROI4)[1] &lt;- "LFE.ROI.4"
+rm(LFE.Transpose.ROI4) # A little clean up
+
+LFE.Transpose.ROI5 &lt;- t(LFE.grandmean.ROI5)
+LFE.Transpose.ROI5&lt;-t(LFE.Transpose.ROI5)
+LFE.DF.ROI5 &lt;- as.data.frame(LFE.Transpose.ROI5)
+names(LFE.DF.ROI5)[1] &lt;- "LFE.ROI.5"
+rm(LFE.Transpose.ROI5) # A little clean up
+
+LFE.Transpose.ROI6 &lt;- t(LFE.grandmean.ROI6)
+LFE.Transpose.ROI6&lt;-t(LFE.Transpose.ROI6)
+LFE.DF.ROI6 &lt;- as.data.frame(LFE.Transpose.ROI6)
+names(LPC.DF.ROI6)[1] &lt;- "LFE.ROI.6"
+rm(LFE.Transpose.ROI6) # A little clean up
+
+LFE.Transpose.ROI7 &lt;- t(LFE.grandmean.ROI7)
+LFE.Transpose.ROI7&lt;-t(LFE.Transpose.ROI7)
+LFE.DF.ROI7 &lt;- as.data.frame(LFE.Transpose.ROI7)
+names(LFE.DF.ROI7)[1] &lt;- "LFE.ROI.7"
+rm(LFE.Transpose.ROI7) # A little clean up
+
+LFE.Transpose.ROI8 &lt;- t(LFE.grandmean.ROI8)
+LFE.Transpose.ROI8&lt;-t(LFE.Transpose.ROI8)
+LFE.DF.ROI8 &lt;- as.data.frame(LFE.Transpose.ROI8)
+names(LFE.DF.ROI8)[1] &lt;- "LFE.ROI.8"
+rm(LFE.Transpose.ROI8) # A little clean up
+
+LFE.Transpose.ROI9 &lt;- t(LFE.grandmean.ROI9)
+LFE.Transpose.ROI9&lt;-t(LFE.Transpose.ROI9)
+LFE.DF.ROI9 &lt;- as.data.frame(LFE.Transpose.ROI9)
+names(LFE.DF.ROI9)[1] &lt;- "LFE.ROI.9"
+rm(LFE.Transpose.ROI9) # A little clean up
+
+############################################################
+# DK.7: Set up a new data frame for all LFE Grand Averages #
+############################################################
+
+LFE.DF.ROI1 &lt;- cbind(LFE.DF.ROI1, LFE.DF.ROI2, LFE.DF.ROI3, LFE.DF.ROI4, LFE.DF.ROI5, LFE.DF.ROI6, LFE.DF.ROI7, LFE.DF.ROI8, LFE.DF.ROI9)
+DK.LFE.GrandAvg &lt;- LFE.DF.ROI1
+DK.LFE.GrandAvg &lt;-unnest(DK.LFE.GrandAvg)
+
+
+# Renames columns (make sure to add or subtract labels based on your number of ROIs!!!)
+names(DK.LFE.GrandAvg)[1:9] &lt;- c("DK.LFE.ROI1", "DK.LFE.ROI2", "DK.LFE.ROI3", "DK.LFE.ROI4", "DK.LFE.ROI5", "DK.LFE.ROI6", "DK.LFE.ROI7", "DK.LFE.ROI8", "DK.LFE.ROI9")
+DK.All.GrandAvg &lt;-cbind(DK.FN400.GrandAvg, DK.LPC.GrandAvg, DK.LFE.GrandAvg)
+
+
+
+
+###########################################################################
+# END.1: OUTPUT ALL GRAND AVERAGES TO A CSV FILE FOR USE IN EXCEL OR SPSS #
+###########################################################################
+
+
+
+# Combines all FN400, LPC, and LFE data frames into one singular data frame
+ID&lt;-as.data.frame(namesout)
+names(ID)[1] &lt;-c("Subject")
+CD.FAM.DK.All.GrandAvg &lt;-cbind(ID, CD.All.GrandAvg, FAM.All.GrandAvg, DK.All.GrandAvg)
+
+# Takes the big data frame, writes Data out as a CSV file. Writes out to your working directory.
+# This data file can be used in Excel or SPSS if you choose not to analyze it in R
+write.csv(CD.FAM.DK.All.GrandAvg, file = Out.File.csv, row.names = FALSE)
+write.xlsx(CD.FAM.DK.All.GrandAvg, file = Out.File.xlsx, sheetName="ROI Data", col.names=TRUE, row.names=FALSE, append=FALSE, showNA=TRUE)
+
+cat("Script Complete!\nScript Complete!\nScript Complete!\nScript Complete!\nScript Complete!\nScript Complete!\nScript Complete!\nScript Complete!\nScript Complete!\nScript Complete!\nScript Complete!\nScript Complete!\n")
+</code></pre>
+      </section>
+    </div>
+
+    <!-- FOOTER  -->
+    <div id="footer_wrap" class="outer">
+      <footer class="inner">
+        <p class="copyright">Analysis of Event Related Potentials (ERPs) maintained by <a href="https://github.com/mjtat">mjtat</a></p>
+        <p>Published with <a href="https://pages.github.com">GitHub Pages</a></p>
+      </footer>
+    </div>
+
+    
+
+  </body>
+</html>
